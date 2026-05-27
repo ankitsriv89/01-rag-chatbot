@@ -95,8 +95,8 @@ async def upload_document(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Upload failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+        logger.exception(f"Upload failed for '{file.filename}'")
+        raise HTTPException(status_code=500, detail="Processing error. See server logs.")
 
 
 # ── POST /query ────────────────────────────────────────────────────────────────
@@ -138,9 +138,9 @@ async def query_documents(request: QueryRequest):
                 async for token, model in stream_with_fallback(request.question, retriever):
                     yield f"data: {json.dumps({'token': token})}\n\n"
                 yield f"data: {json.dumps({'done': True})}\n\n"
-            except Exception as e:
-                logger.error(f"Streaming error: {e}")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            except Exception:
+                logger.exception("Streaming error")
+                yield f"data: {json.dumps({'error': 'Generation error. See server logs.'})}\n\n"
 
         return StreamingResponse(
             token_generator(),
@@ -178,9 +178,9 @@ async def query_documents(request: QueryRequest):
             model_used=model_used,
         )
 
-    except Exception as e:
-        logger.error(f"Query failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Generation error: {str(e)}")
+    except Exception:
+        logger.exception("Query failed")
+        raise HTTPException(status_code=500, detail="Generation error. See server logs.")
 
 
 # ── GET /status ────────────────────────────────────────────────────────────────

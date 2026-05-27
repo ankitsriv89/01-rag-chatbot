@@ -103,12 +103,13 @@ Upload documents (PDF, DOCX, TXT) and ask questions about them using LLMs.
 
 
 # ── CORS Middleware ────────────────────────────────────────────────────────────
-# CONCEPT: In production, replace ["*"] with your actual frontend domain.
-# ["*"] means any origin can call this API — fine for dev/demo, not for prod.
+# allow_credentials=False because we have no cookie/session auth.
+# allow_origins=["*"] is intentional for a public demo API — set ALLOWED_ORIGINS
+# in .env to a comma-separated list of trusted origins for production deployments.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],           # Replace with ["https://yourapp.hf.space"] in prod
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,       # No cookies/sessions — credentials not needed
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
