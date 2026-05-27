@@ -1,0 +1,51 @@
+# docker-compose.yml
+# Runs both services locally with a single command: docker-compose up
+#
+# CONCEPT — docker-compose vs Dockerfile:
+#   Dockerfile defines HOW to build one image.
+#   docker-compose defines HOW to run multiple containers together,
+#   their networking, volumes, and environment variables.
+
+version: "3.9"
+
+services:
+
+  # ── FastAPI Backend ──────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-backend
+    ports:
+      - "8000:8000"       # host:container
+    env_file:
+      - .env              # Load all vars from your .env file
+    volumes:
+      # Mount chroma_db directory so vector data persists across container restarts
+      - ./chroma_db:/app/chroma_db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Gradio Frontend ──────────────────────────────────────────────────────────
+  frontend:
+    image: python:3.11-slim
+    container_name: rag-frontend
+    working_dir: /frontend
+    command: >
+      sh -c "pip install gradio==6.15.1 httpx==0.28.1 --quiet &&
+             python app.py"
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./frontend:/frontend
+    environment:
+      # Points the frontend to the backend service name (Docker internal DNS)
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

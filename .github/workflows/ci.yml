@@ -1,0 +1,93 @@
+# GitHub Actions CI Pipeline
+# ============================
+# Runs automatically on every push to main and every pull request.
+#
+# CONCEPT — CI/CD:
+#   CI (Continuous Integration): automatically run tests on every code change.
+#   CD (Continuous Deployment): automatically deploy when tests pass.
+#   This file handles CI. Deployment is triggered separately or manually.
+#
+# CONCEPT — Why CI matters in production:
+#   Without CI, bugs reach main branch undetected.
+#   With CI, every PR must pass all tests before merging.
+#   GitHub shows a ✅ or ❌ next to every commit — hiring managers notice this.
+
+name: CI — Test & Lint
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Run tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]  # Test on multiple Python versions
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"  # Cache pip dependencies between runs (faster CI)
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+
+      - name: Set dummy env vars for tests
+        # Tests mock API calls, but config.py validates keys at import.
+        # We set fake values so the app doesn't crash on import.
+        run: |
+          echo "GROQ_API_KEY=gsk_test_dummy" >> $GITHUB_ENV
+          echo "OPENAI_API_KEY=sk-test_dummy" >> $GITHUB_ENV
+          echo "LLM_PROVIDER=groq" >> $GITHUB_ENV
+          echo "DEBUG=false" >> $GITHUB_ENV
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=60
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.11'
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false  # Don't fail if Codecov is down
+
+  lint:
+    name: Lint & type check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install linting tools
+        run: |
+          pip install ruff pyright
+
+      - name: Ruff lint (fast Python linter — replaces flake8 + isort)
+        run: ruff check app/ frontend/ tests/
+
+      - name: Ruff format check
+        run: ruff format --check app/ frontend/ tests/
