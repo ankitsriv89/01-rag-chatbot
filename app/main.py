@@ -21,8 +21,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 import sys
 
+import gradio as gr
+
 from app.config import settings
 from app.api.routes import router
+from frontend.app import build_ui
 
 
 # ── Logging Setup ──────────────────────────────────────────────────────────────
@@ -123,22 +126,19 @@ app.include_router(router, prefix="/api/v1", tags=["RAG Pipeline"])
 
 # ── Root Health Check ─────────────────────────────────────────────────────────
 
-@app.get("/", tags=["Health"])
-async def root():
-    """Simple health check — load balancers and uptime monitors ping this."""
+@app.get("/health", tags=["Health"])
+async def health():
+    """Health check for load balancers and monitoring systems."""
     return {
         "status": "healthy",
         "app": settings.app_name,
         "version": settings.app_version,
-        "docs": "/docs",
-    }
-
-
-@app.get("/health", tags=["Health"])
-async def health():
-    """Detailed health check for monitoring systems (Prometheus, Datadog, etc.)."""
-    return {
-        "status": "healthy",
         "llm_provider": settings.llm_provider.value,
         "vector_store": settings.vector_store_type.value,
     }
+
+
+# ── Mount Gradio UI at root ───────────────────────────────────────────────────
+# Single-process deploy (HF Spaces): Gradio serves the UI at "/", FastAPI keeps
+# /api/v1/*, /docs, /health. Frontend code calls http://localhost:7860/api/v1/*.
+app = gr.mount_gradio_app(app, build_ui(), path="/")

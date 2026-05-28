@@ -9,13 +9,11 @@ CONCEPT — Why Gradio?
   Gradio 6.x uses a Blocks API that gives full layout control.
 
 CONCEPT — How this frontend communicates with the FastAPI backend:
-  Gradio runs as a separate process (different port).
-  It calls our FastAPI endpoints via httpx (async HTTP client).
-  For streaming, it reads Server-Sent Events from /api/v1/query
-  and yields tokens progressively to the chat UI.
-
-Architecture:
-  Browser → Gradio (port 7860) → FastAPI (port 8000) → Groq API → Response
+  Two deploy modes are supported via BACKEND_URL:
+    - Local dev:   BACKEND_URL=http://localhost:8000 (separate processes)
+    - HF Spaces:   BACKEND_URL=http://localhost:7860 (Gradio mounted on FastAPI,
+                   single process, single port — see app/main.py)
+  In both cases it calls FastAPI endpoints via httpx and reads SSE for streaming.
 """
 
 import os
@@ -25,9 +23,8 @@ import gradio as gr
 from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
-# In production (HF Spaces), set BACKEND_URL as a Space secret.
-# Locally, it points to your running FastAPI server.
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+# Default targets the same-process FastAPI when Gradio is mounted on it (HF Spaces).
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:7860")
 API_BASE = f"{BACKEND_URL}/api/v1"
 
 # Timeout for non-streaming requests (upload, status)
@@ -207,87 +204,74 @@ Powered by **LLaMA 3.3 70B** via Groq + **LangChain** + **FAISS**.
 3. The bot answers using ONLY content from your documents
 """
 
-with gr.Blocks(title="RAG Chatbot") as demo:
+def build_ui() -> gr.Blocks:
+    """Construct and return the Gradio Blocks UI (no .launch())."""
+    with gr.Blocks(title="RAG Chatbot") as demo:
 
-    gr.Markdown(DESCRIPTION)
+        gr.Markdown(DESCRIPTION)
 
-    with gr.Tabs():
+        with gr.Tabs():
 
-        # ── Tab 1: Document Upload ─────────────────────────────────────────
-        with gr.Tab("📁 Documents"):
-            gr.Markdown("### Upload Documents")
-            gr.Markdown("Supported formats: PDF, DOCX, TXT (max 50MB each)")
+            # ── Tab 1: Document Upload ─────────────────────────────────────
+            with gr.Tab("📁 Documents"):
+                gr.Markdown("### Upload Documents")
+                gr.Markdown("Supported formats: PDF, DOCX, TXT (max 50MB each)")
 
-            with gr.Row():
-                file_input = gr.File(
-                    label="Select document",
-                    file_types=[".pdf", ".docx", ".txt"],
-                    type="filepath",
+                with gr.Row():
+                    file_input = gr.File(
+                        label="Select document",
+                        file_types=[".pdf", ".docx", ".txt"],
+                        type="filepath",
+                    )
+
+                with gr.Row():
+                    upload_btn = gr.Button("📤 Upload & Index", variant="primary", scale=2)
+                    clear_btn = gr.Button("🗑️ Clear All Documents", variant="secondary", scale=1)
+
+                upload_status = gr.Markdown(label="Status")
+
+                gr.Markdown("---")
+                gr.Markdown("### System Status")
+                status_btn = gr.Button("🔄 Refresh Status", size="sm")
+                status_output = gr.Markdown()
+
+                upload_btn.click(fn=upload_document, inputs=[file_input], outputs=[upload_status])
+                clear_btn.click(fn=clear_documents, outputs=[upload_status])
+                status_btn.click(fn=get_status, outputs=[status_output])
+
+                demo.load(fn=get_status, outputs=[status_output])
+
+            # ── Tab 2: Chat Interface ──────────────────────────────────────
+            with gr.Tab("💬 Chat"):
+                gr.Markdown("### Ask questions about your documents")
+                gr.Markdown(
+                    "_Answers are grounded strictly in your uploaded documents. "
+                    "Sources are shown in the non-streaming API response._"
                 )
 
-            with gr.Row():
-                upload_btn = gr.Button("📤 Upload & Index", variant="primary", scale=2)
-                clear_btn = gr.Button("🗑️ Clear All Documents", variant="secondary", scale=1)
+                chatbot = gr.Chatbot(label="RAG Chatbot", height=500, show_label=True)
 
-            upload_status = gr.Markdown(label="Status")
+                with gr.Row():
+                    msg_input = gr.Textbox(
+                        label="Your question",
+                        placeholder="e.g. What is the main topic of the document?",
+                        scale=5,
+                        autofocus=True,
+                    )
+                    send_btn = gr.Button("Send", variant="primary", scale=1)
 
-            gr.Markdown("---")
-            gr.Markdown("### System Status")
-            status_btn = gr.Button("🔄 Refresh Status", size="sm")
-            status_output = gr.Markdown()
+                gr.ClearButton([msg_input, chatbot], value="Clear Chat")
 
-            # Wire up button actions
-            upload_btn.click(fn=upload_document, inputs=[file_input], outputs=[upload_status])
-            clear_btn.click(fn=clear_documents, outputs=[upload_status])
-            status_btn.click(fn=get_status, outputs=[status_output])
+                msg_input.submit(fn=stream_chat, inputs=[msg_input, chatbot], outputs=[chatbot])
+                send_btn.click(fn=stream_chat, inputs=[msg_input, chatbot], outputs=[chatbot])
 
-            # Auto-load status on tab open
-            demo.load(fn=get_status, outputs=[status_output])
-
-        # ── Tab 2: Chat Interface ──────────────────────────────────────────
-        with gr.Tab("💬 Chat"):
-            gr.Markdown("### Ask questions about your documents")
-            gr.Markdown(
-                "_Answers are grounded strictly in your uploaded documents. "
-                "Sources are shown in the non-streaming API response._"
-            )
-
-            chatbot = gr.Chatbot(
-                label="RAG Chatbot",
-                height=500,
-                show_label=True,
-            )
-
-            with gr.Row():
-                msg_input = gr.Textbox(
-                    label="Your question",
-                    placeholder="e.g. What is the main topic of the document?",
-                    scale=5,
-                    autofocus=True,
-                )
-                send_btn = gr.Button("Send", variant="primary", scale=1)
-
-            clear_chat_btn = gr.ClearButton([msg_input, chatbot], value="Clear Chat")
-
-            # Gradio 6.x chat streaming pattern
-            msg_input.submit(
-                fn=stream_chat,
-                inputs=[msg_input, chatbot],
-                outputs=[chatbot],
-            )
-            send_btn.click(
-                fn=stream_chat,
-                inputs=[msg_input, chatbot],
-                outputs=[chatbot],
-            )
-
-        # ── Tab 3: About ───────────────────────────────────────────────────
-        with gr.Tab("ℹ️ About"):
-            gr.Markdown("""
+            # ── Tab 3: About ───────────────────────────────────────────────
+            with gr.Tab("ℹ️ About"):
+                gr.Markdown("""
 ### Architecture
 
 ```
-User → Gradio UI → FastAPI Backend → Groq LLM (LLaMA 3.3 70B)
+User → Gradio UI (mounted on FastAPI) → Groq LLM (LLaMA 3.3 70B)
                          ↓
                OpenAI Embeddings (text-embedding-3-small)
                          ↓
@@ -311,15 +295,17 @@ User → Gradio UI → FastAPI Backend → Groq LLM (LLaMA 3.3 70B)
 | Orchestration | LangChain 1.3 |
 | Frontend | Gradio 6.x |
 | Deployment | Hugging Face Spaces + Docker |
-            """)
+                """)
+
+    return demo
 
 
 if __name__ == "__main__":
-    demo.launch(
+    # Standalone launch — used for local frontend-only dev against a separate
+    # FastAPI backend (set BACKEND_URL=http://localhost:8000).
+    build_ui().launch(
         server_name="0.0.0.0",
         server_port=7860,
         share=False,
         show_error=True,
-        theme=gr.themes.Soft(primary_hue="blue"),
-        css=".gradio-container { max-width: 900px !important; margin: auto; }",
     )

@@ -1,22 +1,43 @@
+---
+title: 01 RAG Chatbot
+emoji: 📄
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+short_description: Production RAG chatbot — FastAPI + Gradio + Groq + LangChain
+---
+
 # 📄 Production RAG Chatbot
 
 A production-grade Retrieval-Augmented Generation (RAG) system for document Q&A. Upload PDFs, DOCX, or TXT files and ask questions about them using LLMs.
 
-[![CI](https://github.com/your-username/01-rag-chatbot/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/01-rag-chatbot/actions/workflows/ci.yml)
+[![CI](https://github.com/ankitsriv89/01-rag-chatbot/actions/workflows/ci.yml/badge.svg)](https://github.com/ankitsriv89/01-rag-chatbot/actions/workflows/ci.yml)
+
+> **Deployed on Hugging Face Spaces** — a single Docker container runs FastAPI (`/api/v1/*`, `/docs`, `/health`) with Gradio mounted at `/` on port 7860 via `gr.mount_gradio_app`.
 
 ## Architecture
 
 ```
-User → Gradio UI (port 7860)
-            ↓ HTTP
-      FastAPI Backend (port 8000)
-            ↓               ↓
-   OpenAI Embeddings    Groq LLM (LLaMA 3.3 70B)
-   text-embedding-3-small    + fallback chain
-            ↓
-      FAISS Vector Store
-      (or Chroma for persistence)
+                  ┌─── port 7860 (single container) ───┐
+User ──HTTP──▶│  Gradio UI  /                              │
+                  │  FastAPI    /api/v1/*  /docs  /health     │
+                  └────────────────────┬──────────────────┘
+                                       ↓
+                  OpenAI Embeddings  +  Groq LLM (LLaMA 3.3 70B + fallback chain)
+                                       ↓
+                  FAISS Vector Store (or Chroma for persistence)
 ```
+
+Gradio is mounted on FastAPI via `gr.mount_gradio_app(app, demo, path="/")` so a
+single Uvicorn process serves both the UI and the REST API on port 7860 — the
+shape Hugging Face Spaces expects.
+
+For local dev you can still split them (FastAPI on 8000, Gradio on 7860) by
+running `uvicorn app.main:app` and `python frontend/app.py` separately with
+`BACKEND_URL=http://localhost:7860`. `docker-compose up` also keeps this split.
 
 ## RAG Pipeline
 
@@ -46,7 +67,7 @@ User → Gradio UI (port 7860)
 ### 1. Clone and set up environment
 
 ```bash
-git clone https://github.com/your-username/01-rag-chatbot
+git clone https://github.com/ankitsriv89/01-rag-chatbot
 cd 01-rag-chatbot
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -65,28 +86,31 @@ cp .env.example .env
 # Model downloads ~90MB on first use, then cached.
 ```
 
-### 3. Start the backend
+### 3. Run the combined app (single process)
 
 ```bash
+uvicorn app.main:app --reload --port 7860
+# UI:      http://localhost:7860/
+# Docs:    http://localhost:7860/docs
+# Health:  http://localhost:7860/health
+```
+
+### Optional: split FastAPI and Gradio for development
+
+```bash
+# Terminal A
 uvicorn app.main:app --reload --port 8000
-# API docs at http://localhost:8000/docs
+# Terminal B
+BACKEND_URL=http://localhost:7860 python frontend/app.py
+# UI at http://localhost:7860, API at http://localhost:7860/docs
 ```
 
-### 4. Start the frontend (new terminal)
-
-```bash
-pip install gradio httpx
-BACKEND_URL=http://localhost:8000 python frontend/app.py
-# UI at http://localhost:7860
-```
-
-## Docker (Recommended)
+## Docker
 
 ```bash
 cp .env.example .env   # fill in your keys
 docker-compose up --build
-# Backend: http://localhost:8000/docs
-# Frontend: http://localhost:7860
+# App: http://localhost:7860/ (UI), /docs (API), /health
 ```
 
 ## API Endpoints
@@ -102,14 +126,14 @@ docker-compose up --build
 ### Example: Upload a document
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/upload \
+curl -X POST http://localhost:7860/api/v1/upload \
   -F "file=@report.pdf"
 ```
 
 ### Example: Query (non-streaming with sources)
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/query \
+curl -X POST http://localhost:7860/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{"question": "What is the main finding?", "stream": false}'
 ```
@@ -117,7 +141,7 @@ curl -X POST http://localhost:8000/api/v1/query \
 ### Example: Query (streaming SSE)
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/query \
+curl -X POST http://localhost:7860/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{"question": "Summarise the document", "stream": true}'
 ```
@@ -149,11 +173,19 @@ Override the primary model with `GROQ_MODEL=<model-id>` in `.env`.
 
 ## Deployment
 
-### Hugging Face Spaces (frontend)
+### Hugging Face Spaces (this repo)
 
-1. Create a new Space with Gradio SDK
-2. Upload `frontend/app.py` and a `requirements.txt` with `gradio httpx`
-3. Add `BACKEND_URL` as a Space Secret pointing to your deployed backend
+The Space [anksriv/01-rag-chatbot](https://huggingface.co/spaces/anksriv/01-rag-chatbot)
+deploys directly from this repo:
+
+1. **Docker SDK** declared in the README frontmatter (`sdk: docker`, `app_port: 7860`)
+2. **One container** built from this `Dockerfile` runs FastAPI + Gradio on port 7860
+3. **Secrets** set in Space Settings (NOT committed):
+   - `GROQ_API_KEY` — required
+   - `OPENAI_API_KEY` — required when `EMBEDDING_PROVIDER=openai`
+   - any other vars from `.env.example` you want to override
+
+Push to the `main` branch of the Space remote to trigger a rebuild.
 
 ### Cloud backend (GCP Cloud Run / AWS ECS)
 
@@ -161,7 +193,7 @@ Override the primary model with `GROQ_MODEL=<model-id>` in `.env`.
 docker build -t rag-chatbot .
 docker tag rag-chatbot gcr.io/your-project/rag-chatbot
 docker push gcr.io/your-project/rag-chatbot
-# Deploy via GCP Console or `gcloud run deploy`
+# Deploy via GCP Console or `gcloud run deploy --port 7860`
 ```
 
 ## Embedding Provider

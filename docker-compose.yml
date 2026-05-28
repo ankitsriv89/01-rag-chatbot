@@ -1,51 +1,31 @@
 # docker-compose.yml
-# Runs both services locally with a single command: docker-compose up
+# Single-container local dev that mirrors the Hugging Face Spaces deploy:
+# one Uvicorn process serves Gradio UI at / and FastAPI at /api/v1/*, /docs, /health
+# all on port 7860 (see app/main.py for the gr.mount_gradio_app call).
 #
-# CONCEPT — docker-compose vs Dockerfile:
-#   Dockerfile defines HOW to build one image.
-#   docker-compose defines HOW to run multiple containers together,
-#   their networking, volumes, and environment variables.
+# For the legacy two-process workflow (FastAPI on 8000 + separate Gradio on 7860),
+# run them outside Docker:
+#   uvicorn app.main:app --port 8000
+#   BACKEND_URL=http://localhost:8000 python frontend/app.py
 
 version: "3.9"
 
 services:
-
-  # ── FastAPI Backend ──────────────────────────────────────────────────────────
-  backend:
+  app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: rag-backend
+    container_name: rag-chatbot
     ports:
-      - "8000:8000"       # host:container
+      - "7860:7860"
     env_file:
-      - .env              # Load all vars from your .env file
+      - .env
     volumes:
-      # Mount chroma_db directory so vector data persists across container restarts
+      # Persist vector store across container restarts
       - ./chroma_db:/app/chroma_db
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:7860/health').raise_for_status()"]
       interval: 30s
       timeout: 10s
       retries: 3
-
-  # ── Gradio Frontend ──────────────────────────────────────────────────────────
-  frontend:
-    image: python:3.11-slim
-    container_name: rag-frontend
-    working_dir: /frontend
-    command: >
-      sh -c "pip install gradio==6.15.1 httpx==0.28.1 --quiet &&
-             python app.py"
-    ports:
-      - "7860:7860"
-    volumes:
-      - ./frontend:/frontend
-    environment:
-      # Points the frontend to the backend service name (Docker internal DNS)
-      - BACKEND_URL=http://backend:8000
-    depends_on:
-      backend:
-        condition: service_healthy
-    restart: unless-stopped

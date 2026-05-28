@@ -40,33 +40,37 @@ COPY --from=builder /install /usr/local
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash appuser
 
-# Copy application source
+# Copy application source: FastAPI backend + Gradio UI (mounted in app/main.py)
 COPY app/ ./app/
+COPY frontend/ ./frontend/
 
-# Set ownership to non-root user
-RUN chown -R appuser:appuser /app
+# HF Spaces runs as non-root (UID 1000); ensure HOME is writable for model caches
+RUN chown -R appuser:appuser /app && \
+    mkdir -p /home/appuser/.cache && \
+    chown -R appuser:appuser /home/appuser
 
 USER appuser
 
 # ── Environment ───────────────────────────────────────────────────────────────
-# These are defaults — override with real values via docker-compose or .env
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8000
+    PORT=7860 \
+    HOME=/home/appuser \
+    HF_HOME=/home/appuser/.cache/huggingface \
+    TRANSFORMERS_CACHE=/home/appuser/.cache/huggingface \
+    SENTENCE_TRANSFORMERS_HOME=/home/appuser/.cache/sentence-transformers
 
 # ── Health check ──────────────────────────────────────────────────────────────
-# Docker/Kubernetes checks this to know if the container is healthy.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:7860/health').raise_for_status()"
 
-EXPOSE 8000
+EXPOSE 7860
 
 # ── Start command ─────────────────────────────────────────────────────────────
-# --workers 1: single worker (FAISS is in-memory per-process; multi-worker needs Chroma/Pinecone)
-# --host 0.0.0.0: listen on all interfaces inside the container
-# --timeout-keep-alive 75: keep connections alive longer (good for streaming)
+# Single process: FastAPI (/api/v1/*, /docs, /health) + Gradio UI (/) on 7860.
+# --workers 1: FAISS is in-memory per-process; multi-worker needs Chroma/Pinecone.
 CMD ["uvicorn", "app.main:app", \
      "--host", "0.0.0.0", \
-     "--port", "8000", \
+     "--port", "7860", \
      "--workers", "1", \
      "--timeout-keep-alive", "75"]
