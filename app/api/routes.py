@@ -20,6 +20,7 @@ CONCEPT — Streaming (SSE):
 """
 
 import json
+import asyncio
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, File, UploadFile, HTTPException, status
@@ -74,7 +75,10 @@ async def upload_document(
     logger.info(f"Upload received: '{file.filename}' ({len(file_bytes)/1024:.1f} KB)")
 
     try:
-        chunks = process_upload(file_bytes, file.filename)
+        # Run CPU-heavy work in a thread so the async event loop stays alive.
+        # Without this, HuggingFace embedding of 600+ chunks blocks uvicorn's
+        # watchdog timeout and kills the server with no traceback.
+        chunks = await asyncio.to_thread(process_upload, file_bytes, file.filename)
 
         if not chunks:
             raise HTTPException(
@@ -82,7 +86,7 @@ async def upload_document(
                 detail="No text extracted. Is it a scanned/image-only PDF?"
             )
 
-        total_in_store = vector_store_manager.add_documents(chunks)
+        total_in_store = await asyncio.to_thread(vector_store_manager.add_documents, chunks)
 
         return UploadResponse(
             success=True,

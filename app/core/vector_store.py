@@ -45,7 +45,7 @@ def _build_embeddings():
         return HuggingFaceEmbeddings(
             model_name=settings.hf_embedding_model,
             model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
+            encode_kwargs={"normalize_embeddings": True, "batch_size": 32},
         )
     else:
         from langchain_openai import OpenAIEmbeddings

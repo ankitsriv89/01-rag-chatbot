@@ -34,7 +34,7 @@ User → Gradio UI (port 7860)
 |-----------|-----------|
 | API Backend | FastAPI + Uvicorn |
 | LLM | Groq (LLaMA 3.3 70B) with 5-model fallback chain |
-| Embeddings | OpenAI `text-embedding-3-small` (1536 dims) |
+| Embeddings | OpenAI `text-embedding-3-small` (default) or HuggingFace `all-MiniLM-L6-v2` (free/local) |
 | Vector Store | FAISS (dev) / Chroma (prod) |
 | Orchestration | LangChain 1.3 (LCEL) |
 | Frontend | Gradio 6.x |
@@ -57,8 +57,12 @@ pip install -r requirements.txt
 ```bash
 cp .env.example .env
 # Edit .env and add your keys:
-# GROQ_API_KEY=gsk_...      (get free at console.groq.com)
-# OPENAI_API_KEY=sk-...     (required for embeddings)
+# GROQ_API_KEY=gsk_...         (get free at console.groq.com)
+# OPENAI_API_KEY=sk-...        (for embeddings — set EMBEDDING_PROVIDER=openai)
+#
+# To use free local embeddings instead (requires AVX2-capable CPU):
+# EMBEDDING_PROVIDER=huggingface
+# Model downloads ~90MB on first use, then cached.
 ```
 
 ### 3. Start the backend
@@ -159,6 +163,15 @@ docker tag rag-chatbot gcr.io/your-project/rag-chatbot
 docker push gcr.io/your-project/rag-chatbot
 # Deploy via GCP Console or `gcloud run deploy`
 ```
+
+## Embedding Provider
+
+| Provider | Model | Cost | Requires | Notes |
+|----------|-------|------|----------|-------|
+| `openai` (default) | text-embedding-3-small | ~$0.00002/1K tokens | `OPENAI_API_KEY` | Fast, cloud, works on any CPU |
+| `huggingface` | all-MiniLM-L6-v2 | Free | AVX2 CPU | 90MB one-time download, runs offline |
+
+Set `EMBEDDING_PROVIDER=huggingface` in `.env` to switch. Note: HuggingFace requires a CPU with AVX2 instruction support (Intel Haswell 2013+ / AMD Ryzen+).
 
 ## Key Concepts Demonstrated
 
